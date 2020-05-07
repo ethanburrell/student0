@@ -86,7 +86,24 @@ func (l *TPCLeader) replayJournal() error {
 	}
 
 	// BEGIN STUDENT CODE
-
+	// func (l *FileJournal) NewIterator() *EntryIterator
+	var entryjournal = l.journal.NewIterator()
+	// temp, err = entryjournal.Next()
+	for entryjournal.HasNext() {
+		temp, err := entryjournal.Next()
+		if err != nil {
+			return fmt.Errorf("NEXT failed")
+		}
+		//if entryjournal.Size() == 0 {
+		if entryjournal.HasNext() == false {
+			if temp.Action != tpc_pb.Action_PREPARE {
+				l.globalRequest(context.Background(), temp.Action)
+			} else {
+				l.globalRequest(context.Background(), tpc_pb.Action_ABORT)
+			}
+		}
+		// temp, err = entryjournal.Next()
+	}
 	// END STUDENT CODE
 	l.journal.Empty()
 	return nil
@@ -103,7 +120,15 @@ func (l *TPCLeader) voteRequest(ctx context.Context, key, value string) tpc_pb.A
 	}
 	responses := l.manager.SendMessage(ctx, voteRequest, false)
 	// BEGIN STUDENT CODE
-	<-responses // replace this line and do something with responses
+	//<-responses // replace this line and do something with responses
+	for x := 0; x < l.numFollowers; x++ {
+		temp_response := <-responses
+		if temp_response.Action == tpc_pb.Action_ABORT {
+			//close(responses)
+			return tpc_pb.Action_ABORT
+		}
+	}
+	//close(responses)
 	// END STUDENT CODE
 	return tpc_pb.Action_COMMIT
 }
@@ -116,7 +141,11 @@ func (l *TPCLeader) globalRequest(ctx context.Context, action tpc_pb.Action) {
 	}
 	responses := l.manager.SendMessage(ctx, globalRequest, true)
 	// BEGIN STUDENT CODE
-	<-responses // replace this line and do something with responses
+	//<-responses // replace this line and do something with responses
+	for x := 0; x < l.numFollowers; x++ {
+		temp_response := <-responses
+		fmt.Println("iteration " + string(temp_response.Action))
+	}
 	// END STUDENT CODE
 }
 
@@ -148,7 +177,16 @@ func (l *TPCLeader) Put(ctx context.Context, key, value string) error {
 	l.mux.Lock()
 	defer l.mux.Unlock()
 	// BEGIN STUDENT CODE
-
+	/*
+		Start by looking at the function Put . This is the function where all Two Phase
+		Commit transactions begin. The purpose of this function is to update the leader
+		state machine and send the correct messages to the followers. This function
+		will call voteRequest and globalRequest.
+	*/
+	l.journal.Append(journal.Entry{Key: key, Value: value, Action: tpc_pb.Action_PREPARE})
+	action := l.voteRequest(ctx, key, value)
+	l.journal.Append(journal.Entry{Key: key, Value: value, Action: action})
+	l.globalRequest(ctx, action)
 	// END STUDENT CODE
 
 	if l.journal.Size() > MAX_LOG_SIZE {
